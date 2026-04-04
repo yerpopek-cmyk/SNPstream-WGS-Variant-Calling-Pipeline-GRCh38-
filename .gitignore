@@ -3,3 +3,6 @@
 *.bam
 *.bai
 *.vcf
+*.sam
+temp/
+results/
