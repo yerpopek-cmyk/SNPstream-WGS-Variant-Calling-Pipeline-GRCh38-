@@ -11,7 +11,7 @@ To avoid library conflicts (especially the `libcrypto` error), follow these exac
 git clone [https://github.com/yerpopek-cmyk/Germline-WGS-Variant-Calling-Pipeline-GRCh38-.git](https://github.com/yerpopek-cmyk/Germline-WGS-Variant-Calling-Pipeline-GRCh38-.git)
 cd Germline-WGS-Variant-Calling-Pipeline-GRCh38-
 
-# Environment for data prep and alignment(write the name of your own environments)
+# Environment for data prep and alignment(write the names of your own environments)
 conda create -n ngs_prep -c bioconda -c conda-forge sra-tools fastqc fastp bwa -y
 
 # Environment for BAM processing and Variant Calling (includes the libcrypto fix)
