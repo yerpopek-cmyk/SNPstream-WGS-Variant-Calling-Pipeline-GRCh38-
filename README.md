@@ -1,5 +1,5 @@
-# Germline-WGS-Variant-Calling-Pipeline-GRCh38-
-# Germline WGS Variant Calling Pipeline (GRCh38)
+# SNPstream-WGS-Variant-Calling-Pipeline-GRCh38-
+# SNPstream-WGS-Variant-Calling-Pipeline (GRCh38)
 
 Этот проект представляет собой автоматизированный пайплайн для анализа данных полногеномного секвенирования (WGS) с целью поиска герминальных генетических вариантов.This project provides an automated bioinformatics pipeline for analyzing Whole Genome Sequencing (WGS) data to identify germline genetic variants.
 
