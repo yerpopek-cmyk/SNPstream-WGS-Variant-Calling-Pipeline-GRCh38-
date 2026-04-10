@@ -1,4 +1,4 @@
-# Germline WGS Variant Calling Pipeline (GRCh38)
+# SNPstream WGS Variant Calling Pipeline (GRCh38)
 
 This is an automated bioinformatics pipeline for identifying germline genetic variants from Whole Genome Sequencing (WGS) data. Optimized for **GRCh38** and designed with an educational focus.
 
