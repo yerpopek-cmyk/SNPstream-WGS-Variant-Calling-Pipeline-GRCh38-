@@ -32,8 +32,8 @@ Standardization: All generated output follows the VCF v4.2 standard. This ensure
 ## Как запустить|Getting Started
 1. Clone the repository:
   ``bash
-  git clone https://github.com/yerpopek-cmyk/Germline-WGS-Variant-Calling-Pipeline-GRCh38-.git
-cd Germline-WGS-Variant-Calling-Pipeline-GRCh38-
+  git clone https://github.com/yerpopek-cmyk/SNPstream-WGS-Variant-Calling-Pipeline-GRCh38-.git
+cd SNPstream-WGS-Variant-Calling-Pipeline-GRCh38-
 2. Prepare your environment:
 Ensure your reference genome (.fasta) and input SRA accessions are correctly configured in the script.
 3. Execute the pipeline:
