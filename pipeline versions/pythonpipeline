@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+import subprocess
+import time
+import os
+import shutil
+import sys
+
+# --- НАСТРОЙКИ ---
+ACCESSION = "SRR622461"
+REFERENCE = "GCA_000001405.29.fasta"
+SAMPLE = "sample"
+THREADS = 6
+# -----------------
+
+def run_cmd(cmd, shell=False, check=True):
+    """
+    Функция для выполнения системных команд.
+    Если check=True и команда падает, скрипт завершает работу (аналог set -e).
+    """
+    # Если команда передана списком, соединяем для красивого вывода
+    cmd_str = cmd if isinstance(cmd, str) else ' '.join(cmd)
+    
+    result = subprocess.run(cmd, shell=shell)
+    if check and result.returncode != 0:
+        print(f"\n[CRITICAL ERROR] Команда завершилась с ошибкой (Код {result.returncode}):\n{cmd_str}")
+        sys.exit(1)
+    
+    # Возвращает True, если команда выполнилась успешно
+    return result.returncode == 0
+
+def safe_remove(filepath):
+    """Безопасное удаление файла (аналог rm -f)"""
+    if os.path.exists(filepath):
+        os.remove(filepath)
+
+def main():
+    print("[STEP 1/16] Downloading raw reads from SRA (prefetch + fasterq-dump)...")
+    if not run_cmd(["prefetch", ACCESSION], check=False):
+        print("[WARNING] Prefetch failed. Retrying in 60 seconds...")
+        time.sleep(60)
+        run_cmd(["prefetch", ACCESSION])
+
+    run_cmd(["fasterq-dump", ACCESSION, "--split-files", "--threads", str(THREADS)])
+    shutil.move(f"{ACCESSION}_1.fastq", f"{SAMPLE}_R1.fastq")
+    shutil.move(f"{ACCESSION}_2.fastq", f"{SAMPLE}_R2.fastq")
+
+    print("\n[STEP 2/16] Оценка качества сырых ридов (FastQC, pre-trimming)...")
+    os.makedirs("fastqc_before", exist_ok=True)
+    run_cmd(["fastqc", f"{SAMPLE}_R1.fastq", f"{SAMPLE}_R2.fastq", "-t", str(THREADS), "-o", "fastqc_before/"])
+
+    print("\n[STEP 3/16] Фильтрация и обрезка адаптеров (fastp)...")
+    os.makedirs("fastp_reports", exist_ok=True)
+    run_cmd([
+        "fastp",
+        "-i", f"{SAMPLE}_R1.fastq", "-I", f"{SAMPLE}_R2.fastq",
+        "-o", f"{SAMPLE}_R1_trimmed.fastq", "-O", f"{SAMPLE}_R2_trimmed.fastq",
+        "-h", "fastp_reports/fastp_report.html",
+        "-j", "fastp_reports/fastp_report.json",
+        "--thread", str(THREADS)
+    ])
+
+    print("\n[STEP 4/16] Оценка качества обрезанных ридов (FastQC, post-trimming)...")
+    os.makedirs("fastqc_after", exist_ok=True)
+    run_cmd(["fastqc", f"{SAMPLE}_R1_trimmed.fastq", f"{SAMPLE}_R2_trimmed.fastq", "-t", str(THREADS), "-o", "fastqc_after/"])
+
+    print("\n[STEP 5/16] Индексирование референсного генома (BWA index)...")
+    run_cmd(["bwa", "index", REFERENCE])
+
+    print("\n[STEP 6/16] Выравнивание ридов на референс и конвертация в BAM (BWA MEM + samtools view)...")
+    # Используем shell=True, так как у нас есть пайп (|) и перенаправление вывода (>)
+    cmd_bwa = f"bwa mem -t {THREADS} {REFERENCE} {SAMPLE}_R1_trimmed.fastq {SAMPLE}_R2_trimmed.fastq | samtools view -@ {THREADS} -b - > {SAMPLE}.bam"
+    
+    if run_cmd(cmd_bwa, shell=True, check=False):
+        print("[INFO] Выравнивание завершено успешно.")
+    else:
+        print("[WARNING] Ошибка выравнивания. Повторный запуск с 2 потоками для снижения нагрузки...")
+        cmd_bwa_fallback = f"bwa mem -t 2 {REFERENCE} {SAMPLE}_R1_trimmed.fastq {SAMPLE}_R2_trimmed.fastq | samtools view -b - > {SAMPLE}.bam"
+        run_cmd(cmd_bwa_fallback, shell=True)
+
+    print("\n[STEP 7/16] Сортировка BAM по геномным координатам...")
+    run_cmd(["samtools", "sort", "-m", "1G", "-@", str(THREADS), "-o", f"{SAMPLE}_sorted.bam", f"{SAMPLE}.bam"])
+    safe_remove(f"{SAMPLE}.bam")
+
+    print("\n[STEP 8/16] Индексация координатно-отсортированного BAM...")
+    run_cmd(["samtools", "index", f"{SAMPLE}_sorted.bam"])
+
+    print("\n[STEP 9/16] Сортировка BAM по именам ридов (подготовка к fixmate)...")
+    run_cmd(["samtools", "sort", "-n", "-m", "1G", "-@", str(THREADS), "-o", f"{SAMPLE}_namesorted.bam", f"{SAMPLE}_sorted.bam"])
+
+    print("\n[STEP 10/16] Добавление технических тегов для детекции дубликатов (samtools fixmate)...")
+    run_cmd(["samtools", "fixmate", "-m", f"{SAMPLE}_namesorted.bam", f"{SAMPLE}_fixmate.bam"])
+    safe_remove(f"{SAMPLE}_namesorted.bam")
+
+    print("\n[STEP 11/16] Повторная сортировка по координатам после fixmate...")
+    run_cmd(["samtools", "sort", "-m", "1G", "-@", str(THREADS), "-o", f"{SAMPLE}_fixmate_sorted.bam", f"{SAMPLE}_fixmate.bam"])
+    safe_remove(f"{SAMPLE}_fixmate.bam")
+
+    print("\n[STEP 12/16] Маркировка дубликатов ридов (samtools markdup)...")
+    run_cmd(["samtools", "markdup", "-@", str(THREADS), f"{SAMPLE}_fixmate_sorted.bam", f"{SAMPLE}_marked.bam"])
+    safe_remove(f"{SAMPLE}_fixmate_sorted.bam")
+
+    print("\n[STEP 13/16] Удаление маркированных дубликатов из BAM...")
+    run_cmd(["samtools", "view", "-b", "-F", "1024", "-@", str(THREADS), f"{SAMPLE}_marked.bam", "-o", f"{SAMPLE}_noduplicates.bam"])
+    safe_remove(f"{SAMPLE}_marked.bam")
+
+    print("\n[STEP 14/16] Удаление некартированных ридов из BAM...")
+    run_cmd(["samtools", "view", "-b", "-F", "4", "-@", str(THREADS), f"{SAMPLE}_noduplicates.bam", "-o", f"{SAMPLE}_mapped.bam"])
+    safe_remove(f"{SAMPLE}_noduplicates.bam")
+
+    print("\n[STEP 15/16] Индексация финального BAM-файла...")
+    run_cmd(["samtools", "index", f"{SAMPLE}_mapped.bam"])
+
+    print("\n[STEP 16/16] Вызов вариантов (bcftools mpileup | bcftools call)...")
+    os.makedirs("variants", exist_ok=True)
+    
+    cmd_vcf = f"bcftools mpileup -f {REFERENCE} {SAMPLE}_mapped.bam | bcftools call -mv -Ov -o variants/{SAMPLE}_variants.vcf"
+    if run_cmd(cmd_vcf, shell=True, check=False):
+        print("[INFO] Variant calling завершён успешно (conda bcftools).")
+    else:
+        print("[WARNING] Обнаружена ошибка, вероятно конфликт библиотек (libcrypto). Переключение на системный /usr/bin/bcftools...")
+        cmd_vcf_fallback = f"/usr/bin/bcftools mpileup -f {REFERENCE} {SAMPLE}_mapped.bam | /usr/bin/bcftools call -mv -Ov -o variants/{SAMPLE}_variants.vcf"
+        run_cmd(cmd_vcf_fallback, shell=True)
+
+    print("\n=========================================")
+    print("PIPELINE COMPLETED SUCCESSFULLY")
+    print(f"Final alignment : {SAMPLE}_mapped.bam")
+    print(f"Variant calls   : variants/{SAMPLE}_variants.vcf")
+    print("=========================================")
+
+if __name__ == "__main__":
+    main()
